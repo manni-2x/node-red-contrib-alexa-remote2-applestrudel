@@ -421,6 +421,262 @@ module.exports = function (RED) {
 			this.setState('UNINITIALISED');
 		};
 
+		        // ------------------------------------------------------------
+        //  KORRIGIERTE initAlexa() – Token stabil, Proxy stabil
+        // ------------------------------------------------------------
+        this.initAlexa = async function(input, ignoreFile = false) {
+            if (this.initing) {
+                this.debugCb("Already initializing Alexa!");
+                return;
+            }
+            this.initing = true;
+            this.warn("INIT: initAlexa() START " + this.authMethod);
+
+            try {
+         // ------------------------------------------------------------
+         // 1) Grundkonfiguration
+         // ------------------------------------------------------------
+                let config = {};
+                tools.assign(config, [
+                    "proxyOwnIp",
+                    "proxyPort",
+                    "alexaServiceHost",
+                    "pushDispatchHost",
+                    "amazonPage",
+                    "acceptLanguage",
+                    "onKeywordInLanguage",
+                    "userAgent",
+                    "usePushConnection",
+                    "autoQueryActivityOnTrigger"
+                ], this);
+
+                config.logger = this.debugCb; // original
+                //config.logger = msg => node.warn(msg);  //Node-Red debug log
+                //config.logger = msg => this.warn("REMOTE: " + msg); // wie Alexa2
+                //config.logger = msg => this.log(msg);  // iOb log
+                config.refreshCookieInterval = 0;
+                config.proxyLogLevel = "warn";
+                config.cookieJustCreated = true;
+                config.bluetooth = false;
+                config.setupProxy = false;
+                config.proxyOnly = false;
+                config.ignoreFile = ignoreFile; // 02.2026
+                config.amazonPage = "amazon.de"; // 2.03.2026
+                config.baseAmazonPage = "amazon.de";
+
+                const storePath = RED.settings.userDir ? RED.settings.userDir
+                                  : "/opt/iobroker/iobroker-data/node-red/";
+                // Token-Datei (Token-Modus)
+                const tokenFile = path.join(storePath, `alexa-token-${this.id}.json`);
+                let storedToken = null;
+
+                // ------------------------------------------------------------
+                // 1) Gemeinsame Vorbereitung
+                // ------------------------------------------------------------
+                this.tokenFile = tokenFile;
+                this.cookieFile = fs.existsSync(this.cookieFile) ? this.cookieFile
+                                : path.join(storePath, `cookie-${this.id}.json`);
+                this.setState("INIT", this.authMethod);
+                this.initing = true;
+
+                // ------------------------------------------------------------
+                // 2) Aufruf der passenden Initialisierung
+                // ------------------------------------------------------------
+                switch (this.authMethod) {
+                    case "token":
+                        await this.initToken(config);
+                        break;
+
+                  // später: OAuth
+                  // case "oauth":
+                  //     await this.initOauth(config);
+                  //     break;
+
+                    default:
+                        await this.initDefault(config);
+                        break;
+                }
+
+                // Wenn die Initialisierung abgebrochen wurde (Proxy-Fallback)
+                if (!this.initing) return;
+
+                // ------------------------------------------------------------
+                // 3) Gemeinsamer Abschluss
+                // ------------------------------------------------------------
+                await this.builders.devices();
+                await this.builders.smarthome();
+                await this.builders.notifications();
+
+                await this.buildUiJson(false);
+
+                this.setState("READY");
+                this.renewTimeout();
+                this.initing = false;
+            } catch (err) {
+                this.setState("ERROR",
+                    "initAlexa exception: " + err.message);
+                this.initing = false;
+                this.warnCb(err);
+            } // try...
+        }; // this.initAlexa 20260224
+
+        this.initDefault = async function(config) {
+            // ------------------------------------------------------------
+            // Init Default: proxy, cookie, user+pass
+            // ------------------------------------------------------------
+            // orig. Version bbindreiter + try/catch + config.ignoreFile
+            try {
+                switch (this.authMethod) {
+                    case 'proxy':
+                        config.proxyOnly = true; // should not matter
+
+                        const cookieData = tools.isObject(input) && input.loginCookie && tools.clone(input) || this.cookieFile && !config.ignoreFile && await readFileAsync(this.cookieFile, 'utf8').then(json => JSON.parse(json)).catch(this.warnCb) || undefined;
+
+                        config.cookie = cookieData;
+                        break;
+                    case 'cookie':
+                        tools.assign(config, ['cookie'], this.credentials);
+                        break;
+                    case 'password':
+                        tools.assign(config, ['email', 'password'], this.credentials);
+                        break;
+                }
+
+                if (!config.amazonPageProxyLanguage) config.amazonPageProxyLanguage = config.acceptLanguage && config.acceptLanguage.replace('-', '_') || undefined;
+
+                // guess authentication method that AlexaRemote will use
+                // useful if we want to drive init by input
+                // currently initType should not differ this.authMethod
+                const initType = config.cookie ? (config.cookie.loginCookie ? 'proxy' : 'cookie') : (config.email && config.password ? 'password' : 'proxy');
+
+                this.resetAlexa();
+
+                switch (initType) {
+                    case 'proxy':
+                        this.setState('INIT_PROXY');
+                        break;
+                    case 'cookie':
+                        this.setState('INIT_COOKIE');
+                        break;
+                    case 'password':
+                        this.setState('INIT_PASSWORD');
+                        break;
+                }
+
+                this.logCb(`intialising ${this.name ? `"${this.name}" `: ''}with the ${initType.toUpperCase()} method and ${config.cookie ? '': 'NO '}saved data...`);
+
+                this.debugCb(`Alexa-Remote: starting initialisation:`);
+                this.debugCb(`Alexa-Remote: ${JSON.stringify({
+                    authMethod: this.authMethod, initType: initType, cookie: config.cookie
+                })}`);
+
+                // the this.alexa we init could change once the this.alexa.initExt is complete because
+                // this.resetAlexa() or this.initAlexa() might have been called again during this time
+                // so we need to check if this.alexa has changed and if so handle it differently
+                const alexa = this.alexa;
+
+                const proxyWaitCallback = (url) => {
+                    if (alexa !== this.alexa) return;
+                    const text = `open ${url} in your browser`;
+                    this.warn(text);
+                    this.setState('WAIT_PROXY', text);
+                };
+
+                if (initType === 'proxy') {
+                    await tools.portAvailable(config.proxyPort).catch(error => {
+                        if (error.code === 'EADDRINUSE') error.message = `port ${config.proxyPort} already in use`;
+                        this.setState('ERROR', error.message);
+                        this.initing = false;
+                        throw error;
+                    });
+                }
+
+                const cookieData = await alexa.initExt(config,
+                    proxyWaitCallback,
+                    this.warnCb).catch(error => {
+                    if (alexa !== this.alexa) return;
+                    this.setState('ERROR', error && error.message);
+                    this.initing = false;
+                    throw error;
+                });
+
+                // see above why
+                if (alexa !== this.alexa) {
+                    this.initing = false;
+                    throw new Error('Initialisation was aborted!');
+                }
+
+                if (this.authMethod === 'proxy' && this.cookieFile) {
+                    const data = alexa.cookieData;
+                    const json = JSON.stringify(data);
+                    try {
+                        fs.writeFileSync(this.cookieFile, json, 'utf8');
+                    } catch (error) {
+                        this.warnCb(error);
+                    }
+                }
+                /*
+                await this.buildUiJson(false);
+
+                this.alexa.on('change-device', _ => this.builders.devices().catch(this.warnCb));
+                this.alexa.on('change-smarthome', _ => this.builders.smarthome().catch(this.warnCb));
+                this.alexa.on('change-notification', _ => this.builders.notifications().catch(this.warnCb));
+     */
+                // see above why
+                if (alexa !== this.alexa) {
+                    this.initing = false;
+                    throw new Error('Initialisation was aborted!');
+                }
+
+                /*       this.setState('READY');
+                this.renewTimeout();
+                this.initing = false;
+        */
+                return cookieData;
+            } catch (err) {
+                this.setState("ERROR",
+                    "initDefault failed: " + err.message);
+                this.initing = false;
+                return;
+            }
+
+        }; // this.initDefault
+
+        this.initToken = async function (config) {
+        // --------------------------------------------------------
+        // TOKEN-MODUS – nutzt AlexaAuthEngine (auth.js)
+        // --------------------------------------------------------
+            this.setState("INIT_TOKEN");
+
+            const AlexaAuthEngine = require("../lib/alexa2-auth-engine/auth");
+
+         // Region / Logger absichern
+            config.amazonPage = config.amazonPage || "amazon.de";
+            config.logger = config.logger || this.debugCb;
+
+         // Engine instanzieren
+            const engine = new AlexaAuthEngine(this, config);
+
+         // Token-/Cookie-Login über Engine durchführen
+         // Engine entscheidet selbst:
+         //   - gespeicherte Session → Cookie-Login
+         //   - keine Session → Proxy-Login
+            const cookieData = await engine.init();
+
+         // Die von der Engine initialisierte Alexa-Instanz übernehmen
+         // KEINE this.alexa = engine.alexa;
+            this.cookieData = cookieData || {};
+
+         // KEIN setState("READY") hier!
+         // initAlexa() lädt danach:
+         //   - devices
+         //   - smarthome
+         //   - notifications
+         //   - UI
+         //   - setzt READY
+        };  // this.initToken 202603
+		
+/*
 		this.initAlexa = async function(input, ignoreFile = false) {
 			if(this.initing)  {
 				this.debugCb('Already initializing Alexa!');
@@ -533,6 +789,7 @@ module.exports = function (RED) {
 			this.initing = false;
 			return cookieData;
 		};
+*/
 		this.refreshAlexa = async function() {
 			if(this.state.code !== 'READY') throw new Error('account must be initialised before refreshing');
 			this.setState('REFRESH');
