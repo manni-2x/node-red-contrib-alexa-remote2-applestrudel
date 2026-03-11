@@ -421,7 +421,7 @@ module.exports = function (RED) {
 			this.setState('UNINITIALISED');
 		};
 
-		        // ------------------------------------------------------------
+		// ------------------------------------------------------------
         //  KORRIGIERTE initAlexa() – Token stabil, Proxy stabil
         // ------------------------------------------------------------
         this.initAlexa = async function(input, ignoreFile = false) {
@@ -648,7 +648,7 @@ module.exports = function (RED) {
         // --------------------------------------------------------
             this.setState("INIT_TOKEN");
 
-            const AlexaAuthEngine = require("../lib/alexa2-auth-engine/auth");
+            const AlexaAuthEngine = require("../lib/authEng/auth");
 
          // Region / Logger absichern
             config.amazonPage = config.amazonPage || "amazon.de";
