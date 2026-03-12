@@ -547,16 +547,17 @@ module.exports = function (RED) {
                 switch (this.authMethod) {
                     case 'proxy':
                         config.proxyOnly = true; // should not matter
-
                         const cookieData = tools.isObject(input) && input.loginCookie && tools.clone(input) || this.cookieFile && !config.ignoreFile && await readFileAsync(this.cookieFile, 'utf8').then(json => JSON.parse(json)).catch(this.warnCb) || undefined;
-
+						config.cookieJustCreated = !cookieData;
                         config.cookie = cookieData;
                         break;
                     case 'cookie':
                         tools.assign(config, ['cookie'], this.credentials);
+						config.cookieJustCreated = !cookieData;
                         break;
                     case 'password':
                         tools.assign(config, ['email', 'password'], this.credentials);
+						config.cookieJustCreated = !cookieData;
                         break;
                 }
 
