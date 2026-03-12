@@ -328,16 +328,33 @@ module.exports = function (RED) {
 		this.errorMessages = {};
 		this.ui = {};
 		this.builders = {};
-		this.persistCookieData = () => {
+	/*	this.persistCookieData = () => {
 			if (this.authMethod !== 'proxy' || !this.cookieFile || !this.alexa || !this.alexa.cookieData) return;
 			const json = JSON.stringify(this.alexa.cookieData);
 			try { fs.writeFileSync(this.cookieFile, json, 'utf8'); }
 			catch (error) { this.warnCb(error); }
 		};
-		this.attachAlexaHandlers = () => {
-			if (!this.alexa) return;
-			this.alexa.on('cookie', () => this.persistCookieData());
-		};
+	*/  //  code advice copilot
+		this.cookiePersistTimeout = null;
+> 		this.persistCookieData = () => {
+> 			if (this.authMethod !== 'proxy' || !this.cookieFile || !this.alexa || !this.alexa.cookieData) return;
+> 			const json = JSON.stringify(this.alexa.cookieData);
+> 
+> 			if (this.cookiePersistTimeout) {
+> 				clearTimeout(this.cookiePersistTimeout);
+> 				this.cookiePersistTimeout = null;
+> 			}
+> 
+> 			this.cookiePersistTimeout = setTimeout(() => {
+> 				fs.promises.writeFile(this.cookieFile, json, 'utf8').catch((error) => {
+> 					this.warnCb(error);
+> 				});
+> 			}, 200);
+			this.attachAlexaHandlers = () => {
+				if (!this.alexa) return;
+				this.alexa.on('cookie', () => this.persistCookieData());
+			};
+		}
 
 		this.attachAlexaHandlers();
 
