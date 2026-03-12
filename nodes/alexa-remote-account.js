@@ -350,11 +350,12 @@ module.exports = function (RED) {
 > 					this.warnCb(error);
 > 				});
 > 			}, 200);
-			this.attachAlexaHandlers = () => {
-				if (!this.alexa) return;
-				this.alexa.on('cookie', () => this.persistCookieData());
-			};
 		}
+			
+		this.attachAlexaHandlers = () => {
+			if (!this.alexa) return;
+			this.alexa.on('cookie', () => this.persistCookieData());
+		};
 
 		this.attachAlexaHandlers();
 
@@ -624,13 +625,15 @@ module.exports = function (RED) {
                 }
 
                 if (this.authMethod === 'proxy' && this.cookieFile) {
-                    const data = alexa.cookieData;
+            /*        const data = alexa.cookieData;
                     const json = JSON.stringify(data);
                     try {
                         fs.writeFileSync(this.cookieFile, json, 'utf8');
                     } catch (error) {
                         this.warnCb(error);
                     }
+			*/
+					this.persistCookieData();
                 }
                 /*
                 await this.buildUiJson(false);
