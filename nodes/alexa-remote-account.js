@@ -522,11 +522,20 @@ module.exports = function (RED) {
                 // ------------------------------------------------------------
                 // 3) Gemeinsamer Abschluss
                 // ------------------------------------------------------------
-                await this.builders.devices();
-                await this.builders.smarthome();
-                await this.builders.notifications();
-
                 await this.buildUiJson(false);
+                //await this.builders.devices();
+                //await this.builders.smarthome();
+                //await this.builders.notifications();
+
+                this.alexa.on('change-device', _ => this.builders.devices().catch(this.warnCb));
+	        this.alexa.on('change-smarthome', _ => this.builders.smarthome().catch(this.warnCb));
+		this.alexa.on('change-notification', _ => this.builders.notifications().catch(this.warnCb));
+
+		// see above why
+		if(alexa !== this.alexa) {
+			this.initing = false;
+			throw new Error('Initialisation was aborted!');
+		}
 
                 this.setState("READY");
                 this.renewTimeout();
